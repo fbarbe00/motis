@@ -116,6 +116,7 @@ std::vector<api::StepInstruction> get_step_instructions(
     std::span<osr::path::segment const> segments,
     unsigned const api_version) {
   auto steps = std::vector<api::StepInstruction>{};
+  steps.reserve(segments.size());
   auto pred_lvl = from.lvl_.to_float();
   for (auto const& s : segments) {
     if (s.from_ != osr::node_idx_t::invalid() && s.from_ < w.n_nodes() &&
@@ -249,21 +250,27 @@ api::Itinerary street_routing(osr::ways const& w,
           : std::optional<osr::routing_time_t>{};
   auto const from = get_location(from_place);
   auto const to = get_location(to_place);
-  auto const s = e ? get_states_at(w, l, *e, bound_time, from.pos_)
-                   : std::optional{std::pair<nodes_t, states_t>{}};
+  auto const exact_return_allowed = out.allows_free_floating_return_at(to);
   auto const cache_key = street_routing_cache_key_t{
       from, to, out.get_cache_key(),
       out.is_time_dependent() ? bound_time : n::unixtime_t{n::i32_minutes{0}},
-      out.is_time_dependent() ? osr_dir : osr::direction::kForward};
+      out.is_time_dependent() ? osr_dir : osr::direction::kForward,
+      exact_return_allowed};
   auto const path = utl::get_or_create(cache, cache_key, [&]() {
-    auto const& [e_nodes, e_states] = *s;
+    auto const elevator_states =
+        e ? get_states_at(w, l, *e, bound_time, from.pos_)
+          : std::optional{std::pair<nodes_t, states_t>{}};
     auto const profile = out.get_profile();
     return osr::route(
         to_profile_parameters(profile, osr_params), w, l, profile, from, to,
         static_cast<osr::cost_t>(max.count()), osr_dir, max_matching_distance,
-        s ? &set_blocked(e_nodes, e_states, blocked_mem) : nullptr,
+        elevator_states ? &set_blocked(elevator_states->first,
+                                       elevator_states->second, blocked_mem)
+                        : nullptr,
         out.get_sharing_data(), elevations, osr::routing_algorithm::kAStarBi,
-        osr_start_time);
+        osr_start_time,
+        osr::route_endpoint_options{
+            .exact_return_at_to_ = {exact_return_allowed}});
   });
 
   if (!path.has_value()) {
@@ -309,6 +316,7 @@ api::Itinerary street_routing(osr::ways const& w,
         auto const to_node = range.back().to_;
 
         auto concat = geo::polyline{};
+        concat.reserve(range.size());
         auto dist = 0.0;
         for (auto const& p : range) {
           utl::concat(concat, p.polyline_);

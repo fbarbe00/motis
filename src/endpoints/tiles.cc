@@ -1,6 +1,7 @@
 #include "motis/endpoints/tiles.h"
 
 #include <string>
+#include <utility>
 
 #include "tiles/get_tile.h"
 #include "tiles/parse_tile_url.h"
@@ -26,7 +27,7 @@ net::reply tiles::operator()(net::route_request const& req, bool) const {
   }
 
   auto pc = ::tiles::null_perf_counter{};
-  auto const rendered_tile =
+  auto rendered_tile =
       ::tiles::get_tile(tiles_data_.db_handle_, tiles_data_.pack_handle_,
                         tiles_data_.render_ctx_, *tile, pc);
 
@@ -35,7 +36,7 @@ net::reply tiles::operator()(net::route_request const& req, bool) const {
   res.insert(boost::beast::http::field::content_type,
              "application/vnd.mapbox-vector-tile");
   res.insert(boost::beast::http::field::content_encoding, "gzip");
-  res.body() = rendered_tile.value_or("");
+  res.body() = rendered_tile ? std::move(*rendered_tile) : "";
   res.keep_alive(req.keep_alive());
   return res;
 }

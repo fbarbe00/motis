@@ -173,13 +173,7 @@ std::vector<api::ParetoSet> transit_durations(
       arrive_by
           ? n::routing::one_to_all<n::direction::kBackward>(ep.tt_, nullptr, q)
           : n::routing::one_to_all<n::direction::kForward>(ep.tt_, nullptr, q);
-
-  auto reachable = n::bitvec{ep.tt_.n_locations()};
-  for (auto i = 0U; i != ep.tt_.n_locations(); ++i) {
-    if (state.template get_best<0>()[i][0] != unreachable) {
-      reachable.set(i);
-    }
-  }
+  auto const& best_times = state.template get_best<0>();
 
   auto pareto_sets = std::vector<api::ParetoSet>{};
 
@@ -200,7 +194,7 @@ std::vector<api::ParetoSet> transit_durations(
 
     for (auto const offset : offsets) {
       auto const loc = offset.target();
-      if (reachable.test(to_idx(loc))) {
+      if (best_times[to_idx(loc)][0] != unreachable) {
         auto const base = duration_to_seconds(offset.duration());
         n::routing::for_each_one_to_all_round_time(
             ep.tt_, state, dir, loc, time, q.max_transfers_,
