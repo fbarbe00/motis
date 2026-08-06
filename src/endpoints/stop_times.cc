@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <memory>
+#include <queue>
+#include <tuple>
+#include <utility>
 
 #include "utl/concat.h"
 #include "utl/enumerate.h"
@@ -299,35 +302,47 @@ std::vector<n::rt::run> get_events(
     }
   }
 
-  auto const all_finished = [&]() {
-    return utl::all_of(iterators,
-                       [](auto const& it) { return it->finished(); });
+  struct queue_entry {
+    n::unixtime_t time_;
+    std::size_t iterator_idx_;
   };
 
   auto const fwd = dir == n::direction::kForward;
+  auto const queue_cmp = [fwd](queue_entry const& a, queue_entry const& b) {
+    if (a.time_ == b.time_) {
+      return a.iterator_idx_ > b.iterator_idx_;
+    }
+    return fwd ? a.time_ > b.time_ : a.time_ < b.time_;
+  };
+  auto queue = std::priority_queue<queue_entry, std::vector<queue_entry>,
+                                   decltype(queue_cmp)>{queue_cmp};
+  for (auto const [idx, it] : utl::enumerate(iterators)) {
+    if (!it->finished()) {
+      queue.emplace(it->time(), idx);
+    }
+  }
+
   auto evs = std::vector<n::rt::run>{};
   auto last_time = n::unixtime_t{};
-  while (!all_finished()) {
-    auto const it = std::min_element(
-        begin(iterators), end(iterators), [&](auto const& a, auto const& b) {
-          if (a->finished() || b->finished()) {
-            return a->finished() < b->finished();
-          }
-          return fwd ? a->time() < b->time() : a->time() > b->time();
-        });
-    assert(!(*it)->finished());
-    auto const current_time = (*it)->time();
+  while (!queue.empty()) {
+    auto const entry = queue.top();
+    auto& it = iterators[entry.iterator_idx_];
+    auto const current_time = entry.time_;
     if ((!max_time_diff.has_value() ||
          std::chrono::abs(current_time - time) > *max_time_diff) &&
         (evs.size() >= min_count && current_time != last_time)) {
       break;
     }
-    evs.emplace_back((*it)->get());
+    queue.pop();
+    evs.emplace_back(it->get());
     utl::verify<net::too_many_exception>(
         evs.size() <= max_count,
         "requesting for more than {} datapoints is not allowed", max_count);
     last_time = current_time;
-    (*it)->increment();
+    it->increment();
+    if (!it->finished()) {
+      queue.emplace(it->time(), entry.iterator_idx_);
+    }
   }
   return evs;
 }
@@ -462,25 +477,32 @@ std::vector<n::rt::run> stop_times::get_runs(
                            static_cast<std::size_t>(max_results), allowed_clasz,
                            query.withScheduledSkippedStops_, window);
 
-  auto const to_tuple = [&](n::rt::run const& x) {
+  struct keyed_event {
+    n::rt::run run_;
+    std::tuple<n::unixtime_t, n::trip_idx_t> key_;
+  };
+  auto keyed_events = utl::to_vec(events, [&](n::rt::run const& x) {
     auto const fr_a = n::rt::frun{tt_, rtt, x};
     auto const s = fr_a[0];
     auto const e_type = ev_type.value_or(
         fr_a.stop_range_.from_ == fr_a.size() - 1U ? n::event_type::kArr
                                                    : n::event_type::kDep);
-    return std::tuple{s.time(e_type), fr_a.is_scheduled()
-                                          ? s.get_trip_idx(e_type)
-                                          : n::trip_idx_t::invalid()};
-  };
-  utl::sort(events, [&](n::rt::run const& a, n::rt::run const& b) {
-    return to_tuple(a) < to_tuple(b);
+    return keyed_event{
+        x,
+        {s.time(e_type), fr_a.is_scheduled() ? s.get_trip_idx(e_type)
+                                             : n::trip_idx_t::invalid()}};
   });
-  events.erase(std::unique(begin(events), end(events),
-                           [&](n::rt::run const& a, n::rt::run const& b) {
-                             return to_tuple(a) == to_tuple(b);
-                           }),
-               end(events));
-  return events;
+  utl::sort(keyed_events, [](keyed_event const& a, keyed_event const& b) {
+    return a.key_ < b.key_;
+  });
+  keyed_events.erase(
+      std::unique(begin(keyed_events), end(keyed_events),
+                  [](keyed_event const& a, keyed_event const& b) {
+                    return a.key_ == b.key_;
+                  }),
+      end(keyed_events));
+  return utl::to_vec(keyed_events,
+                     [](keyed_event& x) { return std::move(x.run_); });
 }
 
 std::vector<nigiri::rt::run> stop_times::get_runs(

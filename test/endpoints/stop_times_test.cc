@@ -58,18 +58,23 @@ LANGEN,Langen,49.99359,8.65677,1,,1,
 FFM_HAUPT,FFM Hauptwache,50.11403,8.67835,1,,,
 FFM_HAUPT_U,Hauptwache U1/U2/U3/U8,50.11385,8.67912,0,FFM_HAUPT,,
 FFM_HAUPT_S,FFM Hauptwache S,50.11404,8.67824,0,FFM_HAUPT,,
+EQ_FROM,Equal Time Origin,49.0,8.0,0,,,
+EQ,Equal Time Stop,49.1,8.1,0,,,
 
 # routes.txt
 route_id,agency_id,route_short_name,route_long_name,route_desc,route_type
 S3,DB,S3,,,109
 U4,DB,U4,,,402
 ICE,DB,ICE,,,101
+EQ,DB,EQ,,,3
 
 # trips.txt
 route_id,service_id,trip_id,trip_headsign,block_id
 S3,S1,S3,,block_1
 U4,S1,U4,,block_1
 ICE,S1,ICE,,
+EQ,S1,EQ1,,
+EQ,S1,EQ2,,
 
 # stop_times.txt
 trip_id,arrival_time,departure_time,stop_id,stop_sequence,pickup_type,drop_off_type
@@ -79,6 +84,10 @@ S3,01:15:00,01:15:00,FFM_101,1,0,0
 S3,01:20:00,01:20:00,FFM_10,2,0,0
 ICE,00:35:00,00:35:00,DA_10,0,0,0
 ICE,00:45:00,00:45:00,FFM_10,1,0,0
+EQ1,01:00:00,01:00:00,EQ_FROM,0,0,0
+EQ1,01:15:00,01:15:00,EQ,1,0,0
+EQ2,01:00:00,01:00:00,EQ_FROM,0,0,0
+EQ2,01:15:00,01:15:00,EQ,1,0,0
 
 # calendar_dates.txt
 service_id,date,exception_type
@@ -308,6 +317,24 @@ TEST(motis, stop_times) {
     }
     EXPECT_FALSE(res.previousPageCursor_.empty());
     EXPECT_FALSE(res.nextPageCursor_.empty());
+  }
+  {
+    // The count cutoff includes all events at the same time in either
+    // direction.
+    for (auto const direction : {"LATER"sv, "EARLIER"sv}) {
+      auto const res = stop_times(
+          std::format("/api/v5/stoptimes?stopId=test_EQ"
+                      "&time=2019-04-30T23:{}:00.000Z"
+                      "&arriveBy=true"
+                      "&direction={}"
+                      "&n=1"
+                      "&language=de",
+                      direction == "LATER"sv ? "00" : "15", direction));
+
+      ASSERT_EQ(2, res.stopTimes_.size());
+      EXPECT_EQ(res.stopTimes_[0].place_.arrival_,
+                res.stopTimes_[1].place_.arrival_);
+    }
   }
   {
     // window query EARLIER
