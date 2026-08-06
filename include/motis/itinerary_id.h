@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,17 +48,20 @@ struct first_last_mile_options {
 first_last_mile_options make_first_last_mile_options(
     api::refreshItinerary_params const&);
 
-std::string generate_itinerary_id(nigiri::routing::journey const&,
-                                  tag_lookup const&,
-                                  nigiri::timetable const&,
-                                  nigiri::rt_timetable const*,
-                                  osr::ways const*,
-                                  osr::platforms const*,
-                                  platform_matches_t const*,
-                                  adr_ext const*,
-                                  tz_map_t const*,
-                                  place_t const& start,
-                                  place_t const& dest);
+std::string generate_itinerary_id(
+    nigiri::routing::journey const&,
+    tag_lookup const&,
+    nigiri::timetable const&,
+    nigiri::rt_timetable const*,
+    osr::ways const*,
+    osr::platforms const*,
+    platform_matches_t const*,
+    adr_ext const*,
+    tz_map_t const*,
+    place_t const& start,
+    place_t const& dest,
+    std::size_t leg_begin = 0U,
+    std::size_t leg_end = std::numeric_limits<std::size_t>::max());
 
 api::Itinerary reconstruct_itinerary(
     ep::routing const&,

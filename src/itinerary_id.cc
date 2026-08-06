@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <utility>
@@ -235,8 +236,12 @@ std::string generate_itinerary_id(n::routing::journey const& j,
                                   adr_ext const* ae,
                                   tz_map_t const* tz_map,
                                   place_t const& start,
-                                  place_t const& dest) {
+                                  place_t const& dest,
+                                  std::size_t const leg_begin,
+                                  std::size_t const leg_end) {
   utl::verify(!j.legs_.empty(), "generate_itinerary_id expects at least 1 leg");
+  auto const end_idx = std::min(leg_end, j.legs_.size());
+  utl::verify(leg_begin < end_idx, "generate_itinerary_id empty leg range");
 
   auto id = proto_id_t{};
 
@@ -251,7 +256,8 @@ std::string generate_itinerary_id(n::routing::journey const& j,
                        mode, true);
   };
 
-  for (auto const& jl : j.legs_) {
+  for (auto const& jl :
+       std::span{j.legs_}.subspan(leg_begin, end_idx - leg_begin)) {
     id.mutable_legs()->Add(utl::visit(
         jl.uses_,
         [&](n::routing::journey::run_enter_exit const& rex) {

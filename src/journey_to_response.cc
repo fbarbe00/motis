@@ -360,20 +360,35 @@ api::Itinerary journey_to_response(
     bool const set_itinerary_id_field,
     alternatives_context const& alternatives,
     std::chrono::nanoseconds* fares_time) {
+  utl::verify(!j_in.legs_.empty(), "journey without legs");
   auto const itinerary_start_time = j_in.legs_.front().dep_time_;
   auto const itinerary_end_time = j_in.legs_.back().arr_time_;
-  auto j = j_in;
+  auto j_copy = with_fares ? std::optional{j_in} : std::nullopt;
+  auto const& j = j_copy ? *j_copy : j_in;
   auto const is_zero_duration_offset = [](n::routing::journey::leg const& l) {
     return std::holds_alternative<n::routing::offset>(l.uses_) &&
            l.dep_time_ == l.arr_time_;
   };
-  if (j.legs_.size() > 1U && is_zero_duration_offset(j.legs_.front())) {
-    j.legs_.erase(j.legs_.begin());
+  auto leg_begin = std::size_t{0U};
+  auto leg_end = j.legs_.size();
+  if (leg_end - leg_begin > 1U && is_zero_duration_offset(j.legs_[leg_begin])) {
+    if (j_copy) {
+      j_copy->legs_.erase(begin(j_copy->legs_));
+      --leg_end;
+    } else {
+      ++leg_begin;
+    }
   }
-  if (j.legs_.size() > 1U && is_zero_duration_offset(j.legs_.back())) {
-    j.legs_.pop_back();
+  if (leg_end - leg_begin > 1U &&
+      is_zero_duration_offset(j.legs_[leg_end - 1U])) {
+    if (j_copy) {
+      j_copy->legs_.pop_back();
+      --leg_end;
+    } else {
+      --leg_end;
+    }
   }
-  utl::verify(!j_in.legs_.empty(), "journey without legs");
+  auto const legs = std::span{j.legs_}.subspan(leg_begin, leg_end - leg_begin);
 
   auto fares = std::optional<std::vector<n::fare_transfer>>{};
   if (with_fares) {
@@ -455,10 +470,11 @@ api::Itinerary journey_to_response(
       .startTime_ = itinerary_start_time,
       .endTime_ = itinerary_end_time,
       .transfers_ = std::max(
-          static_cast<std::iterator_traits<
-              decltype(j.legs_)::iterator>::difference_type>(0),
+          static_cast<
+              std::iterator_traits<decltype(legs)::iterator>::difference_type>(
+              0),
           utl::count_if(
-              j.legs_,
+              legs,
               [](n::routing::journey::leg const& leg) {
                 return holds_alternative<n::routing::journey::run_enter_exit>(
                            leg.uses_) ||
@@ -497,15 +513,15 @@ api::Itinerary journey_to_response(
   };
 
   auto const get_first_run_tz = [&]() -> std::optional<std::string> {
-    if (j.legs_.size() < 2) {
+    if (legs.size() < 2) {
       return std::nullopt;
     }
-    auto const osm_tz = get_tz(tt, ae, tz_map, j.legs_[1].from_);
+    auto const osm_tz = get_tz(tt, ae, tz_map, legs[1].from_);
     if (osm_tz != nullptr) {
       return std::optional{osm_tz->name()};
     }
     return utl::visit(
-        j.legs_[1].uses_, [&](n::routing::journey::run_enter_exit const& x) {
+        legs[1].uses_, [&](n::routing::journey::run_enter_exit const& x) {
           return n::rt::frun{tt, rtt, x.r_}[0].get_tz_name(n::event_type::kDep);
         });
   };
@@ -544,7 +560,8 @@ api::Itinerary journey_to_response(
         });
   };
 
-  for (auto const [j_leg_idx, j_leg] : utl::enumerate(j.legs_)) {
+  for (auto const [leg_idx, j_leg] : utl::enumerate(legs)) {
+    auto const j_leg_idx = leg_begin + leg_idx;
     auto const pred =
         itinerary.legs_.empty() ? nullptr : &itinerary.legs_.back();
     auto const fallback_tz =
@@ -736,6 +753,7 @@ api::Itinerary journey_to_response(
                 leg.to_.scheduledArrival_ = leg.scheduledEndTime_;
                 if (detailed_legs) {
                   auto polyline = geo::polyline{};
+                  polyline.reserve(common_stops.size());
                   fr.for_each_shape_point(shapes, common_stops,
                                           [&](geo::latlng const& pos) {
                                             polyline.emplace_back(pos);
@@ -752,6 +770,7 @@ api::Itinerary journey_to_response(
                 auto const last =
                     static_cast<n::stop_idx_t>(common_stops.to_ - 1U);
                 leg.intermediateStops_ = std::vector<api::Place>{};
+                leg.intermediateStops_->reserve(common_stops.size() - 2U);
                 for (auto i = first; i < last; ++i) {
                   auto const stop = fr[i];
                   if (!with_scheduled_skipped_stops &&
@@ -845,8 +864,9 @@ api::Itinerary journey_to_response(
   cleanup_intermodal(itinerary);
 
   if (set_itinerary_id_field) {
-    itinerary.id_ = generate_itinerary_id(j, tags, tt, rtt, w, pl, matches, ae,
-                                          tz_map, start, dest);
+    itinerary.id_ =
+        generate_itinerary_id(j, tags, tt, rtt, w, pl, matches, ae, tz_map,
+                              start, dest, leg_begin, leg_end);
   }
 
   return itinerary;
